@@ -22,6 +22,17 @@ def norm(s):
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
+def first_surname(s):
+    """Devuelve una clave de orden usando el primer apellido en nombres tipo 'Nombre Apellido1 Apellido2'."""
+    text = str(s).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return ""
+    parts = re.split(r"\s+", text.replace(",", " ").strip())
+    if len(parts) >= 2:
+        return norm(parts[1])
+    return norm(parts[0])
+
+
 def number(v):
     if pd.isna(v) or str(v).strip() == "":
         return None
@@ -136,6 +147,10 @@ if uploads:
             if c not in df.columns:
                 df[c] = None
 
+        # Orden alfabético por primer apellido para la web y para todos los Excel.
+        df["_orden_apellido"] = df["Alumno"].apply(first_surname)
+        df = df.sort_values(["_orden_apellido", "Alumno"], kind="stable").drop(columns=["_orden_apellido"]).reset_index(drop=True)
+
         df["Producción escrita"] = None
         df["Tildes producción"] = None
         df["Nota final sobre 10"] = None
@@ -169,7 +184,6 @@ if uploads:
             },
         )
 
-        # Cada falta de tilde en la producción escrita resta 0,1 puntos.
         edited["Descuento tildes producción"] = (edited["Tildes producción"].fillna(0) * 0.1).round(2)
         edited["Nota producción escrita final"] = (
             edited["Producción escrita"].fillna(0) - edited["Descuento tildes producción"]
