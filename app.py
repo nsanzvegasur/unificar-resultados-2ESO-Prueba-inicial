@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="Unificar resultados · 2.º ESO", page_icon="📊", layout="wide")
 
 st.title("Unificar resultados · Prueba inicial 2.º ESO")
-st.write("Sube los Excel de toda la clase y la aplicación los reunirá en un único archivo. Después podrás introducir manualmente la nota de producción escrita y descargar el resultado completo.")
+st.write("Sube los Excel de toda la clase y la aplicación los reunirá en un único archivo. Después podrás introducir manualmente la producción escrita y descargar el resultado completo.")
 
 AREAS = ["Comprensión", "Morfología", "Semántica", "Textos", "Literatura", "Sintaxis"]
 AREA_KEYS = {
@@ -137,45 +137,65 @@ if uploads:
                 df[c] = None
 
         df["Producción escrita"] = None
+        df["Tildes producción"] = None
         df["Nota final sobre 10"] = None
-        df = df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
+        df = df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Tildes producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
 
         st.success(f"Se han encontrado {len(df)} resultados.")
-        st.subheader("Notas de producción escrita")
-        st.caption("Introduce manualmente la nota de producción escrita de cada alumno, de 0 a 1. La nota final se actualiza automáticamente como Nota sobre 9 + Producción escrita.")
 
-        edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita"]
+        st.markdown(
+            """
+            <div style="border: 2px solid #d32f2f; border-radius: 8px; padding: 12px 16px; margin: 10px 0 18px 0; background-color: #fff5f5;">
+                <div style="color: #c62828; font-size: 1.15rem; font-weight: 700;">IMPORTANTE: INTRODUCE AQUÍ LOS DATOS DE PRODUCCIÓN ESCRITA</div>
+                <div style="color: #333; margin-top: 5px;">Indica la nota de producción escrita (0–1) y las faltas de tilde de esta producción. La aplicación calculará automáticamente la nota final.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita", "Tildes producción"]
         edited = st.data_editor(
             df[edit_cols],
             hide_index=True,
             use_container_width=True,
+            key="datos_produccion",
             column_config={
                 "Producción escrita": st.column_config.NumberColumn(
                     "Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.05, format="%.2f"
                 ),
+                "Tildes producción": st.column_config.NumberColumn(
+                    "Faltas de tilde (-0,1 c/u)", min_value=0, step=1, format="%d"
+                ),
             },
         )
 
+        # Cada falta de tilde en la producción escrita resta 0,1 puntos.
+        edited["Descuento tildes producción"] = (edited["Tildes producción"].fillna(0) * 0.1).round(2)
+        edited["Nota producción escrita final"] = (
+            edited["Producción escrita"].fillna(0) - edited["Descuento tildes producción"]
+        ).clip(lower=0, upper=1).round(2)
         edited["Nota final sobre 10"] = (
-            edited["Nota sobre 9"].fillna(0) + edited["Producción escrita"].fillna(0)
+            edited["Nota sobre 9"].fillna(0) + edited["Nota producción escrita final"].fillna(0)
         ).clip(upper=10).round(2)
 
         st.subheader("Resultado final")
-        result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Nota final sobre 10"]
+        result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Tildes producción", "Descuento tildes producción", "Nota producción escrita final", "Nota final sobre 10"]
         st.dataframe(edited[result_cols], hide_index=True, use_container_width=True)
 
         st.subheader("Media de la clase por apartados")
         chart_df = edited[AREAS].mean().rename("Media").to_frame()
-        chart_df.loc["Producción escrita"] = edited["Producción escrita"].mean() * 10
+        chart_df.loc["Producción escrita"] = edited["Nota producción escrita final"].mean() * 10
         st.bar_chart(chart_df, y="Media")
-        st.caption("El gráfico incluye Comprensión, Morfología, Semántica, Textos, Literatura, Sintaxis y Producción escrita. La producción se muestra sobre 10 para hacerla comparable visualmente con las demás áreas.")
+        st.caption("El gráfico incluye las áreas del examen y la producción escrita. La producción se muestra sobre 10 para hacerla comparable visualmente.")
 
         final_df = df.copy()
         final_df["Producción escrita"] = edited["Producción escrita"]
+        final_df["Tildes producción"] = edited["Tildes producción"]
+        final_df["Descuento tildes producción"] = edited["Descuento tildes producción"]
+        final_df["Nota producción escrita final"] = edited["Nota producción escrita final"]
         final_df["Nota final sobre 10"] = edited["Nota final sobre 10"]
         final_df = final_df.drop(columns=["Fuente"])
 
-        # El Excel recoge exactamente los datos visibles y las notas calculadas.
         final_result = edited[result_cols].copy()
         final_areas = edited[AREAS].copy()
         final_areas.insert(0, "Alumno", edited["Alumno"])
