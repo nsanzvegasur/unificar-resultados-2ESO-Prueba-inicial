@@ -163,10 +163,10 @@ manual_edit = st.data_editor(
     column_config={
         "Alumno": st.column_config.TextColumn("Alumno"),
         "Grupo": st.column_config.TextColumn("Grupo"),
-        **{area: st.column_config.NumberColumn(area, min_value=0.0, max_value=10.0, step=0.1, format="%.2f") for area in AREAS},
-        "Nota sobre 9": st.column_config.NumberColumn("Nota sobre 9", min_value=0.0, max_value=9.0, step=0.1, format="%.2f"),
-        "Producción escrita": st.column_config.NumberColumn("Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.05, format="%.2f"),
-        "Descuento producción": st.column_config.NumberColumn("Descuento por faltas", min_value=-2.0, max_value=0.0, step=0.05, format="%.2f"),
+        **{area: st.column_config.NumberColumn(area, min_value=0.0, max_value=10.0, step=0.01, format="%.2f") for area in AREAS},
+        "Nota sobre 9": st.column_config.NumberColumn("Nota sobre 9", min_value=0.0, max_value=9.0, step=0.01, format="%.2f"),
+        "Producción escrita": st.column_config.NumberColumn("Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.01, format="%.2f"),
+        "Descuento producción": st.column_config.NumberColumn("Descuento por faltas", min_value=-2.0, max_value=0.0, step=0.01, format="%.2f"),
     },
 )
 
