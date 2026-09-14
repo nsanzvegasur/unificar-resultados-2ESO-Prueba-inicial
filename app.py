@@ -7,7 +7,7 @@ import streamlit as st
 st.set_page_config(page_title="Unificar resultados · 2.º ESO", page_icon="📊", layout="wide")
 
 st.title("Unificar resultados · Prueba inicial 2.º ESO")
-st.write("Sube los Excel de toda la clase y la aplicación los reunirá en un único archivo. Después podrás introducir manualmente la producción escrita y descargar el resultado completo.")
+st.write("Sube los Excel de toda la clase y la aplicación los reunirá en un único archivo. También puedes introducir manualmente los datos de alumnos que no tengan el Excel disponible.")
 
 AREAS = ["Comprensión", "Morfología", "Semántica", "Textos", "Literatura", "Sintaxis"]
 AREA_KEYS = {
@@ -120,138 +120,178 @@ def sort_by_first_surname(df):
     """Ordena por el primer apellido, suponiendo el formato habitual: Nombre Apellido1 Apellido2."""
     def surname_key(name):
         parts = str(name).strip().split()
-        if len(parts) >= 3:
-            return " ".join(parts[-2:]).lower()
-        if len(parts) == 2:
-            return parts[-1].lower()
+        if len(parts) >= 2:
+            return parts[1].lower()
         return str(name).lower()
     return df.assign(_orden=df["Alumno"].map(surname_key)).sort_values(["_orden", "Alumno"], kind="stable").drop(columns="_orden").reset_index(drop=True)
 
 
+def prepare_students(df):
+    df = df.copy()
+    for c in AREAS + ["Nota sobre 9", "Ortografía", "Tildes"]:
+        if c not in df.columns:
+            df[c] = None
+    df = sort_by_first_surname(df)
+    df["Producción escrita"] = None
+    df["Descuento producción"] = None
+    df["Nota final sobre 10"] = None
+    return df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
+
+
 uploads = st.file_uploader("Sube los Excel de los alumnos", type=["xlsx", "xls"], accept_multiple_files=True)
 
-if uploads:
-    all_records = []
-    errors = []
-    for upload in uploads:
-        try:
-            all_records.extend(read_excel(upload))
-        except Exception as e:
-            errors.append(f"{upload.name}: {e}")
+# Entrada manual para alumnos que no dispongan del Excel (por ejemplo, prueba realizada en papel o solo disponible mediante captura).
+st.markdown(
+    """
+    <div style="border: 2px solid #1976d2; border-radius: 8px; padding: 12px 16px; margin: 18px 0 10px 0; background-color: #f4f8ff;">
+        <div style="color: #1565c0; font-size: 1.15rem; font-weight: 700;">AÑADIR ALUMNOS MANUALMENTE</div>
+        <div style="color: #333; margin-top: 5px;">Utiliza este apartado para alumnos que hayan realizado la prueba en papel, que solo tengan una captura de los resultados o cuyo Excel no esté disponible. Puedes introducir sus datos aquí aunque no hayas subido ningún Excel.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-    if errors:
-        st.warning("Algunos archivos no se han podido leer: " + " | ".join(errors))
+manual_template = pd.DataFrame(
+    [{"Alumno": "", "Grupo": "", **{area: None for area in AREAS}, "Nota sobre 9": None, "Producción escrita": None, "Descuento producción": None} for _ in range(5)]
+)
+manual_edit = st.data_editor(
+    manual_template,
+    hide_index=True,
+    use_container_width=True,
+    key="alumnos_manuales",
+    num_rows="dynamic",
+    column_config={
+        "Alumno": st.column_config.TextColumn("Alumno"),
+        "Grupo": st.column_config.TextColumn("Grupo"),
+        **{area: st.column_config.NumberColumn(area, min_value=0.0, max_value=10.0, step=0.1, format="%.2f") for area in AREAS},
+        "Nota sobre 9": st.column_config.NumberColumn("Nota sobre 9", min_value=0.0, max_value=9.0, step=0.1, format="%.2f"),
+        "Producción escrita": st.column_config.NumberColumn("Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.05, format="%.2f"),
+        "Descuento producción": st.column_config.NumberColumn("Descuento por faltas", min_value=-2.0, max_value=0.0, step=0.05, format="%.2f"),
+    },
+)
 
-    if all_records:
-        df = pd.DataFrame(all_records)
-        for c in AREAS + ["Nota sobre 9", "Ortografía", "Tildes"]:
-            if c not in df.columns:
-                df[c] = None
+manual_edit = manual_edit[manual_edit["Alumno"].fillna("").astype(str).str.strip() != ""].copy()
+manual_edit["Fecha"] = "Manual"
+manual_edit["Ortografía"] = None
+manual_edit["Tildes"] = None
+manual_edit["Fuente"] = "Entrada manual"
 
-        # Orden alfabético por primer apellido antes de mostrar y editar los datos.
-        df = sort_by_first_surname(df)
+all_records = []
+errors = []
+for upload in uploads or []:
+    try:
+        all_records.extend(read_excel(upload))
+    except Exception as e:
+        errors.append(f"{upload.name}: {e}")
 
-        df["Producción escrita"] = None
-        df["Descuento producción"] = None
-        df["Nota final sobre 10"] = None
-        df = df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
+if errors:
+    st.warning("Algunos archivos no se han podido leer: " + " | ".join(errors))
 
-        st.success(f"Se han encontrado {len(df)} resultados.")
+excel_df = prepare_students(pd.DataFrame(all_records)) if all_records else pd.DataFrame()
 
-        st.markdown(
-            """
-            <div style="border: 2px solid #d32f2f; border-radius: 8px; padding: 12px 16px; margin: 10px 0 18px 0; background-color: #fff5f5;">
-                <div style="color: #c62828; font-size: 1.15rem; font-weight: 700;">IMPORTANTE: INTRODUCE AQUÍ LOS DATOS DE PRODUCCIÓN ESCRITA</div>
-                <div style="color: #333; margin-top: 5px;">Introduce la nota de producción escrita (0–1) y, en la columna de descuento, escribe directamente lo que hay que restar por faltas: por ejemplo, -0,25. La aplicación calculará automáticamente la nota final.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción"]
-        edited = st.data_editor(
-            df[edit_cols],
-            hide_index=True,
-            use_container_width=True,
-            key="datos_produccion",
-            column_config={
-                "Producción escrita": st.column_config.NumberColumn(
-                    "Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.05, format="%.2f"
-                ),
-                "Descuento producción": st.column_config.NumberColumn(
-                    "Descuento por faltas", min_value=-1.0, max_value=0.0, step=0.05, format="%.2f"
-                ),
-            },
-        )
-
-        # El profesor introduce directamente el descuento total de la producción escrita.
-        # Ejemplo: -0,25 significa que se restan 0,25 puntos.
-        edited["Descuento producción"] = edited["Descuento producción"].fillna(0).round(2)
-        edited["Nota producción escrita final"] = (
-            edited["Producción escrita"].fillna(0) + edited["Descuento producción"]
-        ).clip(lower=0, upper=1).round(2)
-        edited["Nota final sobre 10"] = (
-            edited["Nota sobre 9"].fillna(0) + edited["Nota producción escrita final"].fillna(0)
-        ).clip(upper=10).round(2)
-
-        st.subheader("Resultado final")
-        result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Descuento producción", "Nota producción escrita final", "Nota final sobre 10"]
-        st.dataframe(edited[result_cols], hide_index=True, use_container_width=True)
-
-        st.subheader("Media de la clase por apartados")
-        chart_df = edited[AREAS].mean().rename("Media").to_frame()
-        chart_df.loc["Producción escrita"] = edited["Nota producción escrita final"].mean() * 10
-        st.bar_chart(chart_df, y="Media")
-        st.caption("El gráfico incluye las áreas del examen y la producción escrita. La producción se muestra sobre 10 para hacerla comparable visualmente.")
-
-        final_df = df.copy()
-        final_df["Producción escrita"] = edited["Producción escrita"]
-        final_df["Descuento producción"] = edited["Descuento producción"]
-        final_df["Nota producción escrita final"] = edited["Nota producción escrita final"]
-        final_df["Nota final sobre 10"] = edited["Nota final sobre 10"]
-        final_df = final_df.drop(columns=["Fuente"])
-
-        final_result = edited[result_cols].copy()
-        final_areas = edited[AREAS].copy()
-        final_areas.insert(0, "Alumno", edited["Alumno"])
-        final_areas.insert(1, "Grupo", edited["Grupo"])
-
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            final_df.to_excel(writer, sheet_name="Resultados", index=False)
-            final_result.to_excel(writer, sheet_name="Resultado final", index=False)
-            chart_df.round(2).to_excel(writer, sheet_name="Medias por áreas")
-            final_areas.to_excel(writer, sheet_name="Áreas", index=False)
-
-        st.markdown(
-            """
-            <style>
-            div.stDownloadButton > button {
-                background-color: #d32f2f;
-                color: white;
-                border: 2px solid #b71c1c;
-                font-weight: 700;
-                font-size: 1.05rem;
-                padding: 0.65rem 1rem;
-            }
-            div.stDownloadButton > button:hover {
-                background-color: #b71c1c;
-                color: white;
-                border-color: #8f1515;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.download_button(
-            "DESCARGAR EXCEL DE LA CLASE",
-            buffer.getvalue(),
-            file_name="Resultados_unificados_2ESO_Prueba_inicial.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+if not excel_df.empty or not manual_edit.empty:
+    if not manual_edit.empty:
+        manual_df = prepare_students(manual_edit)
     else:
-        st.error("No se ha encontrado ningún resultado reconocible en los archivos. Comprueba que sean los Excel de los resultados individuales.")
-else:
-    st.info("Sube los Excel individuales para empezar.")
+        manual_df = pd.DataFrame(columns=excel_df.columns if not excel_df.empty else ["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"])
+
+    df = pd.concat([excel_df, manual_df], ignore_index=True)
+    df = sort_by_first_surname(df)
+
+    st.success(f"Se han encontrado {len(df)} resultados.")
+
+    st.markdown(
+        """
+        <div style="border: 2px solid #d32f2f; border-radius: 8px; padding: 12px 16px; margin: 10px 0 18px 0; background-color: #fff5f5;">
+            <div style="color: #c62828; font-size: 1.15rem; font-weight: 700;">IMPORTANTE: INTRODUCE AQUÍ LOS DATOS DE PRODUCCIÓN ESCRITA</div>
+            <div style="color: #333; margin-top: 5px;">Introduce la nota de producción escrita (0–1) y, en la columna de descuento, escribe directamente lo que hay que restar por faltas. Se pueden introducir descuentos de hasta 2 puntos, por ejemplo, -0,25 o -2,00. La aplicación calculará automáticamente la nota final.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción"]
+    edited = st.data_editor(
+        df[edit_cols],
+        hide_index=True,
+        use_container_width=True,
+        key="datos_produccion",
+        column_config={
+            "Producción escrita": st.column_config.NumberColumn(
+                "Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.05, format="%.2f"
+            ),
+            "Descuento producción": st.column_config.NumberColumn(
+                "Descuento por faltas", min_value=-2.0, max_value=0.0, step=0.05, format="%.2f"
+            ),
+        },
+    )
+
+    # El profesor introduce directamente el descuento total de la producción escrita.
+    # Ejemplo: -0,25 significa que se restan 0,25 puntos.
+    edited["Descuento producción"] = edited["Descuento producción"].fillna(0).round(2)
+    edited["Nota producción escrita final"] = (
+        edited["Producción escrita"].fillna(0) + edited["Descuento producción"]
+    ).clip(lower=0, upper=1).round(2)
+    edited["Nota final sobre 10"] = (
+        edited["Nota sobre 9"].fillna(0) + edited["Nota producción escrita final"].fillna(0)
+    ).clip(upper=10).round(2)
+
+    st.subheader("Resultado final")
+    result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Descuento producción", "Nota producción escrita final", "Nota final sobre 10"]
+    st.dataframe(edited[result_cols], hide_index=True, use_container_width=True)
+
+    st.subheader("Media de la clase por apartados")
+    chart_df = edited[AREAS].mean().rename("Media").to_frame()
+    chart_df.loc["Producción escrita"] = edited["Nota producción escrita final"].mean() * 10
+    st.bar_chart(chart_df, y="Media")
+    st.caption("El gráfico incluye las áreas del examen y la producción escrita. La producción se muestra sobre 10 para hacerla comparable visualmente.")
+
+    final_df = df.copy()
+    final_df["Producción escrita"] = edited["Producción escrita"]
+    final_df["Descuento producción"] = edited["Descuento producción"]
+    final_df["Nota producción escrita final"] = edited["Nota producción escrita final"]
+    final_df["Nota final sobre 10"] = edited["Nota final sobre 10"]
+    final_df = final_df.drop(columns=["Fuente"])
+
+    final_result = edited[result_cols].copy()
+    final_areas = edited[AREAS].copy()
+    final_areas.insert(0, "Alumno", edited["Alumno"])
+    final_areas.insert(1, "Grupo", edited["Grupo"])
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        final_df.to_excel(writer, sheet_name="Resultados", index=False)
+        final_result.to_excel(writer, sheet_name="Resultado final", index=False)
+        chart_df.round(2).to_excel(writer, sheet_name="Medias por áreas")
+        final_areas.to_excel(writer, sheet_name="Áreas", index=False)
+
+    st.markdown(
+        """
+        <style>
+        div.stDownloadButton > button {
+            background-color: #d32f2f;
+            color: white;
+            border: 2px solid #b71c1c;
+            font-weight: 700;
+            font-size: 1.05rem;
+            padding: 0.65rem 1rem;
+        }
+        div.stDownloadButton > button:hover {
+            background-color: #b71c1c;
+            color: white;
+            border-color: #8f1515;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.download_button(
+        "DESCARGAR EXCEL DE LA CLASE",
+        buffer.getvalue(),
+        file_name="Resultados_unificados_2ESO_Prueba_inicial.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+elif not uploads:
+    st.info("Sube los Excel individuales o introduce manualmente los alumnos que no tengan archivo.")
