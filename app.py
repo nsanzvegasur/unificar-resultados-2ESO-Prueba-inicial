@@ -22,17 +22,6 @@ def norm(s):
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
-def first_surname(s):
-    """Devuelve una clave de orden usando el primer apellido en nombres tipo 'Nombre Apellido1 Apellido2'."""
-    text = str(s).strip()
-    if not text or text.lower() in {"nan", "none"}:
-        return ""
-    parts = re.split(r"\s+", text.replace(",", " ").strip())
-    if len(parts) >= 2:
-        return norm(parts[1])
-    return norm(parts[0])
-
-
 def number(v):
     if pd.isna(v) or str(v).strip() == "":
         return None
@@ -127,6 +116,18 @@ def read_excel(upload):
     return records
 
 
+def sort_by_first_surname(df):
+    """Ordena por el primer apellido, suponiendo el formato habitual: Nombre Apellido1 Apellido2."""
+    def surname_key(name):
+        parts = str(name).strip().split()
+        if len(parts) >= 3:
+            return " ".join(parts[-2:]).lower()
+        if len(parts) == 2:
+            return parts[-1].lower()
+        return str(name).lower()
+    return df.assign(_orden=df["Alumno"].map(surname_key)).sort_values(["_orden", "Alumno"], kind="stable").drop(columns="_orden").reset_index(drop=True)
+
+
 uploads = st.file_uploader("Sube los Excel de los alumnos", type=["xlsx", "xls"], accept_multiple_files=True)
 
 if uploads:
@@ -147,14 +148,13 @@ if uploads:
             if c not in df.columns:
                 df[c] = None
 
-        # Orden alfabético por primer apellido para la web y para todos los Excel.
-        df["_orden_apellido"] = df["Alumno"].apply(first_surname)
-        df = df.sort_values(["_orden_apellido", "Alumno"], kind="stable").drop(columns=["_orden_apellido"]).reset_index(drop=True)
+        # Orden alfabético por primer apellido antes de mostrar y editar los datos.
+        df = sort_by_first_surname(df)
 
         df["Producción escrita"] = None
-        df["Tildes producción"] = None
+        df["Descuento producción"] = None
         df["Nota final sobre 10"] = None
-        df = df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Tildes producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
+        df = df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
 
         st.success(f"Se han encontrado {len(df)} resultados.")
 
@@ -162,13 +162,13 @@ if uploads:
             """
             <div style="border: 2px solid #d32f2f; border-radius: 8px; padding: 12px 16px; margin: 10px 0 18px 0; background-color: #fff5f5;">
                 <div style="color: #c62828; font-size: 1.15rem; font-weight: 700;">IMPORTANTE: INTRODUCE AQUÍ LOS DATOS DE PRODUCCIÓN ESCRITA</div>
-                <div style="color: #333; margin-top: 5px;">Indica la nota de producción escrita (0–1) y las faltas de tilde de esta producción. La aplicación calculará automáticamente la nota final.</div>
+                <div style="color: #333; margin-top: 5px;">Introduce la nota de producción escrita (0–1) y, en la columna de descuento, escribe directamente lo que hay que restar por faltas: por ejemplo, -0,25. La aplicación calculará automáticamente la nota final.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita", "Tildes producción"]
+        edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción"]
         edited = st.data_editor(
             df[edit_cols],
             hide_index=True,
@@ -178,22 +178,24 @@ if uploads:
                 "Producción escrita": st.column_config.NumberColumn(
                     "Producción escrita (0–1)", min_value=0.0, max_value=1.0, step=0.05, format="%.2f"
                 ),
-                "Tildes producción": st.column_config.NumberColumn(
-                    "Faltas de tilde (-0,1 c/u)", min_value=0, step=1, format="%d"
+                "Descuento producción": st.column_config.NumberColumn(
+                    "Descuento por faltas", min_value=-1.0, max_value=0.0, step=0.05, format="%.2f"
                 ),
             },
         )
 
-        edited["Descuento tildes producción"] = (edited["Tildes producción"].fillna(0) * 0.1).round(2)
+        # El profesor introduce directamente el descuento total de la producción escrita.
+        # Ejemplo: -0,25 significa que se restan 0,25 puntos.
+        edited["Descuento producción"] = edited["Descuento producción"].fillna(0).round(2)
         edited["Nota producción escrita final"] = (
-            edited["Producción escrita"].fillna(0) - edited["Descuento tildes producción"]
+            edited["Producción escrita"].fillna(0) + edited["Descuento producción"]
         ).clip(lower=0, upper=1).round(2)
         edited["Nota final sobre 10"] = (
             edited["Nota sobre 9"].fillna(0) + edited["Nota producción escrita final"].fillna(0)
         ).clip(upper=10).round(2)
 
         st.subheader("Resultado final")
-        result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Tildes producción", "Descuento tildes producción", "Nota producción escrita final", "Nota final sobre 10"]
+        result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Descuento producción", "Nota producción escrita final", "Nota final sobre 10"]
         st.dataframe(edited[result_cols], hide_index=True, use_container_width=True)
 
         st.subheader("Media de la clase por apartados")
@@ -204,8 +206,7 @@ if uploads:
 
         final_df = df.copy()
         final_df["Producción escrita"] = edited["Producción escrita"]
-        final_df["Tildes producción"] = edited["Tildes producción"]
-        final_df["Descuento tildes producción"] = edited["Descuento tildes producción"]
+        final_df["Descuento producción"] = edited["Descuento producción"]
         final_df["Nota producción escrita final"] = edited["Nota producción escrita final"]
         final_df["Nota final sobre 10"] = edited["Nota final sobre 10"]
         final_df = final_df.drop(columns=["Fuente"])
