@@ -142,7 +142,7 @@ if uploads:
 
         st.success(f"Se han encontrado {len(df)} resultados.")
         st.subheader("Notas de producción escrita")
-        st.caption("Introduce manualmente la nota de producción escrita de cada alumno, de 0 a 1. La nota final será la suma de Nota sobre 9 + Producción escrita.")
+        st.caption("Introduce manualmente la nota de producción escrita de cada alumno, de 0 a 1. La nota final se actualiza automáticamente como Nota sobre 9 + Producción escrita.")
 
         edit_cols = ["Alumno", "Grupo"] + AREAS + ["Nota sobre 9", "Producción escrita"]
         edited = st.data_editor(
@@ -156,7 +156,6 @@ if uploads:
             },
         )
 
-        # La nota final se calcula automáticamente como Nota sobre 9 + Producción escrita.
         edited["Nota final sobre 10"] = (
             edited["Nota sobre 9"].fillna(0) + edited["Producción escrita"].fillna(0)
         ).clip(upper=10).round(2)
@@ -176,10 +175,39 @@ if uploads:
         final_df["Nota final sobre 10"] = edited["Nota final sobre 10"]
         final_df = final_df.drop(columns=["Fuente"])
 
+        # El Excel recoge exactamente los datos visibles y las notas calculadas.
+        final_result = edited[result_cols].copy()
+        final_areas = edited[AREAS].copy()
+        final_areas.insert(0, "Alumno", edited["Alumno"])
+        final_areas.insert(1, "Grupo", edited["Grupo"])
+
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             final_df.to_excel(writer, sheet_name="Resultados", index=False)
+            final_result.to_excel(writer, sheet_name="Resultado final", index=False)
             chart_df.round(2).to_excel(writer, sheet_name="Medias por áreas")
+            final_areas.to_excel(writer, sheet_name="Áreas", index=False)
+
+        st.markdown(
+            """
+            <style>
+            div.stDownloadButton > button {
+                background-color: #d32f2f;
+                color: white;
+                border: 2px solid #b71c1c;
+                font-weight: 700;
+                font-size: 1.05rem;
+                padding: 0.65rem 1rem;
+            }
+            div.stDownloadButton > button:hover {
+                background-color: #b71c1c;
+                color: white;
+                border-color: #8f1515;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
         st.download_button(
             "DESCARGAR EXCEL DE LA CLASE",
