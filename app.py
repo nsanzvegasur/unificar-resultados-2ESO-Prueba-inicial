@@ -3,6 +3,8 @@ import re
 
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Unificar resultados · 2.º ESO", page_icon="📊", layout="wide")
 
@@ -118,12 +120,21 @@ def read_excel(upload):
 
 def sort_by_first_surname(df):
     """Ordena por el primer apellido, suponiendo el formato habitual: Nombre Apellido1 Apellido2."""
+    if df.empty or "Alumno" not in df.columns:
+        return df.copy()
+
     def surname_key(name):
         parts = str(name).strip().split()
         if len(parts) >= 2:
             return parts[1].lower()
         return str(name).lower()
-    return df.assign(_orden=df["Alumno"].map(surname_key)).sort_values(["_orden", "Alumno"], kind="stable").drop(columns="_orden").reset_index(drop=True)
+
+    return (
+        df.assign(_orden=df["Alumno"].map(surname_key))
+        .sort_values(["_orden", "Alumno"], kind="stable")
+        .drop(columns="_orden")
+        .reset_index(drop=True)
+    )
 
 
 def prepare_students(df):
@@ -134,13 +145,72 @@ def prepare_students(df):
     df = sort_by_first_surname(df)
     df["Producción escrita"] = None
     df["Descuento producción"] = None
+    df["Nota producción escrita final"] = None
     df["Nota final sobre 10"] = None
-    return df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"]]
+    return df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Nota producción escrita final", "Fuente"]]
+
+
+def group_label(df):
+    if df.empty or "Grupo" not in df.columns:
+        return "2ºA"
+    groups = [str(x).strip() for x in df["Grupo"].dropna().unique() if str(x).strip()]
+    if not groups:
+        return "2ºA"
+    return groups[0].replace(" ", "")
+
+
+def format_excel(writer):
+    """Aplica al Excel de salida una presentación homogénea y similar al modelo aportado."""
+    header_fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
+    header_font = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center")
+
+    widths = {
+        "Resultados": [34.57, 15.29, 20.29, 21.29, 19.43, 18.86, 15.43, 18.29, 16.43, 20.86, 25.71, 29.14, 26.14, 15, 11.29, 34.43],
+        "Resultado final": [34.57, 15.29, 26.14],
+        "Para refuerzodesdoble": [34.57, 18.57, 19.29, 88.86],
+        "Medias por áreas": [28, 15],
+        "Áreas": [34.57, 15.29, 21.29, 19.43, 18.86, 15.43, 18.29, 16.43, 19.43],
+    }
+
+    for ws in writer.book.worksheets:
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center
+        ws.freeze_panes = "B2" if ws.title != "Medias por áreas" else None
+        for i, width in enumerate(widths.get(ws.title, []), start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "0.00"
+
+        if ws.title == "Medias por áreas":
+            ws.column_dimensions["A"].width = 28
+            ws.column_dimensions["B"].width = 15
+            for cell in ws[1]:
+                cell.alignment = center
+        elif ws.title == "Resultados":
+            for row in ws.iter_rows(min_row=2, min_col=4, max_col=16):
+                for cell in row:
+                    cell.number_format = "0.00"
+        elif ws.title == "Resultado final":
+            for row in ws.iter_rows(min_row=2, min_col=3, max_col=3):
+                row[0].number_format = "0.00"
+        elif ws.title == "Para refuerzodesdoble":
+            for row in ws.iter_rows(min_row=2, min_col=2, max_col=2):
+                row[0].number_format = "0.00"
+        elif ws.title == "Áreas":
+            for row in ws.iter_rows(min_row=2, min_col=3, max_col=9):
+                for cell in row:
+                    cell.number_format = "0.00"
 
 
 uploads = st.file_uploader("Sube los Excel de los alumnos", type=["xlsx", "xls"], accept_multiple_files=True)
 
-# Entrada manual para alumnos que no dispongan del Excel (por ejemplo, prueba realizada en papel o solo disponible mediante captura).
+# Entrada manual para alumnos que no dispongan del Excel.
 st.markdown(
     """
     <div style="border: 2px solid #1976d2; border-radius: 8px; padding: 12px 16px; margin: 18px 0 10px 0; background-color: #f4f8ff;">
@@ -193,7 +263,7 @@ if not excel_df.empty or not manual_edit.empty:
     if not manual_edit.empty:
         manual_df = prepare_students(manual_edit)
     else:
-        manual_df = pd.DataFrame(columns=excel_df.columns if not excel_df.empty else ["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"])
+        manual_df = pd.DataFrame(columns=excel_df.columns if not excel_df.empty else ["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota producción escrita final", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"])
 
     df = pd.concat([excel_df, manual_df], ignore_index=True)
     df = sort_by_first_surname(df)
@@ -226,8 +296,6 @@ if not excel_df.empty or not manual_edit.empty:
         },
     )
 
-    # El profesor introduce directamente el descuento total de la producción escrita.
-    # Ejemplo: -0,25 significa que se restan 0,25 puntos.
     edited["Descuento producción"] = edited["Descuento producción"].fillna(0).round(2)
     edited["Nota producción escrita final"] = (
         edited["Producción escrita"].fillna(0) + edited["Descuento producción"]
@@ -252,18 +320,35 @@ if not excel_df.empty or not manual_edit.empty:
     final_df["Nota producción escrita final"] = edited["Nota producción escrita final"]
     final_df["Nota final sobre 10"] = edited["Nota final sobre 10"]
     final_df = final_df.drop(columns=["Fuente"])
+    final_df = final_df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Nota producción escrita final"]]
+    final_df = sort_by_first_surname(final_df)
 
     final_result = edited[result_cols].copy()
+    final_result = sort_by_first_surname(final_result)
+
     final_areas = edited[AREAS].copy()
     final_areas.insert(0, "Alumno", edited["Alumno"])
     final_areas.insert(1, "Grupo", edited["Grupo"])
+    final_areas = sort_by_first_surname(final_areas)
+
+    # Hoja para seguimiento de refuerzo/desdoble: misma estructura de columnas que el modelo aportado.
+    seguimiento = final_result[["Alumno", "Nota final sobre 10"]].copy()
+    seguimiento = seguimiento.rename(columns={"Nota final sobre 10": "Nota final"})
+    seguimiento["Categoría"] = ""
+    seguimiento["Observaciones"] = ""
+    seguimiento = seguimiento[["Alumno", "Nota final", "Categoría", "Observaciones"]]
+    seguimiento = seguimiento.sort_values("Alumno", key=lambda s: s.astype(str).str.lower(), kind="stable").reset_index(drop=True)
+
+    suffix = group_label(df)
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        final_df.to_excel(writer, sheet_name="Resultados", index=False)
-        final_result.to_excel(writer, sheet_name="Resultado final", index=False)
-        chart_df.round(2).to_excel(writer, sheet_name="Medias por áreas")
+        final_df.to_excel(writer, sheet_name=f"Resultados {suffix}", index=False)
+        final_result.to_excel(writer, sheet_name=f"Resultado final {suffix}", index=False)
+        seguimiento.to_excel(writer, sheet_name=f"Para refuerzodesdoble {suffix}", index=False)
+        chart_df.round(2).to_excel(writer, sheet_name=f"Medias por áreas {suffix}")
         final_areas.to_excel(writer, sheet_name="Áreas", index=False)
+        format_excel(writer)
 
     st.markdown(
         """
