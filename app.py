@@ -150,17 +150,47 @@ def prepare_students(df):
     return df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Nota producción escrita final", "Fuente"]]
 
 
-def group_label(df):
+def group_label(group):
+    """Normaliza el nombre del grupo para usarlo en las pestañas, por ejemplo 2º A -> 2ºA."""
+    return re.sub(r"\s+", "", str(group).strip())
+
+
+def get_groups(df):
     if df.empty or "Grupo" not in df.columns:
-        return "2ºA"
+        return []
     groups = [str(x).strip() for x in df["Grupo"].dropna().unique() if str(x).strip()]
-    if not groups:
-        return "2ºA"
-    return groups[0].replace(" ", "")
+    return sorted(groups, key=lambda x: group_label(x).lower())
+
+
+def classify_student(row):
+    """Clasifica según la extensión de las dificultades en las áreas evaluadas."""
+    values = pd.to_numeric(pd.Series([row.get(area) for area in AREAS]), errors="coerce").dropna()
+    if values.empty:
+        return "SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
+
+    deficient_areas = values[values < 5]
+    n_deficient = len(deficient_areas)
+    mean = values.mean()
+
+    if n_deficient >= 3 or (n_deficient >= 2 and mean < 5):
+        return "DESDOBLE", "Dificultades muy graves y generalizadas en varias áreas."
+    if n_deficient >= 1:
+        areas_text = ", ".join(deficient_areas.index.tolist())
+        return "REFUERZO", f"Dificultades importantes, pero más localizadas, especialmente en {areas_text}."
+    return "SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
+
+
+def build_seguimiento(final_result):
+    seguimiento = final_result[["Alumno", "Nota final sobre 10"]].copy()
+    seguimiento = seguimiento.rename(columns={"Nota final sobre 10": "Nota final"})
+    clasificaciones = seguimiento.apply(classify_student, axis=1, result_type="expand")
+    seguimiento["Categoría"] = clasificaciones[0]
+    seguimiento["Observaciones"] = clasificaciones[1]
+    seguimiento = seguimiento[["Alumno", "Nota final", "Categoría", "Observaciones"]]
+    return sort_by_first_surname(seguimiento)
 
 
 def format_excel(writer):
-    """Aplica al Excel de salida una presentación homogénea y similar al modelo aportado."""
     header_fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
     header_font = Font(bold=True)
     center = Alignment(horizontal="center", vertical="center")
@@ -170,7 +200,7 @@ def format_excel(writer):
         "Resultado final": [34.57, 15.29, 26.14],
         "Para refuerzodesdoble": [34.57, 18.57, 19.29, 88.86],
         "Medias por áreas": [28, 15],
-        "Áreas": [34.57, 15.29, 21.29, 19.43, 18.86, 15.43, 18.29, 16.43, 19.43],
+        "Áreas": [34.57, 15.29, 21.29, 19.43, 18.86, 15.43, 18.29, 16.43, 19.43, 25.71],
     }
 
     for ws in writer.book.worksheets:
@@ -178,8 +208,9 @@ def format_excel(writer):
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = center
-        ws.freeze_panes = "B2" if ws.title != "Medias por áreas" else None
-        for i, width in enumerate(widths.get(ws.title, []), start=1):
+        ws.freeze_panes = "B2" if not ws.title.startswith("Medias por áreas") else None
+        base_title = next((key for key in widths if ws.title.startswith(key)), None)
+        for i, width in enumerate(widths.get(base_title, []), start=1):
             ws.column_dimensions[get_column_letter(i)].width = width
 
         for row in ws.iter_rows(min_row=2):
@@ -187,30 +218,31 @@ def format_excel(writer):
                 if isinstance(cell.value, (int, float)):
                     cell.number_format = "0.00"
 
-        if ws.title == "Medias por áreas":
+        if ws.title.startswith("Resultados "):
+            for row in ws.iter_rows(min_row=2, min_col=4, max_col=16):
+                for cell in row:
+                    cell.number_format = "0.00"
+        elif ws.title.startswith("Resultado final "):
+            for row in ws.iter_rows(min_row=2, min_col=3, max_col=3):
+                row[0].number_format = "0.00"
+        elif ws.title.startswith("Para refuerzodesdoble "):
+            for row in ws.iter_rows(min_row=2, min_col=2, max_col=2):
+                row[0].number_format = "0.00"
+        elif ws.title.startswith("Medias por áreas"):
             ws.column_dimensions["A"].width = 28
             ws.column_dimensions["B"].width = 15
             for cell in ws[1]:
                 cell.alignment = center
-        elif ws.title == "Resultados":
-            for row in ws.iter_rows(min_row=2, min_col=4, max_col=16):
-                for cell in row:
-                    cell.number_format = "0.00"
-        elif ws.title == "Resultado final":
-            for row in ws.iter_rows(min_row=2, min_col=3, max_col=3):
-                row[0].number_format = "0.00"
-        elif ws.title == "Para refuerzodesdoble":
             for row in ws.iter_rows(min_row=2, min_col=2, max_col=2):
                 row[0].number_format = "0.00"
-        elif ws.title == "Áreas":
-            for row in ws.iter_rows(min_row=2, min_col=3, max_col=9):
+        elif ws.title.startswith("Áreas"):
+            for row in ws.iter_rows(min_row=2, min_col=3, max_col=10):
                 for cell in row:
                     cell.number_format = "0.00"
 
 
 uploads = st.file_uploader("Sube los Excel de los alumnos", type=["xlsx", "xls"], accept_multiple_files=True)
 
-# Entrada manual para alumnos que no dispongan del Excel.
 st.markdown(
     """
     <div style="border: 2px solid #1976d2; border-radius: 8px; padding: 12px 16px; margin: 18px 0 10px 0; background-color: #f4f8ff;">
@@ -263,7 +295,7 @@ if not excel_df.empty or not manual_edit.empty:
     if not manual_edit.empty:
         manual_df = prepare_students(manual_edit)
     else:
-        manual_df = pd.DataFrame(columns=excel_df.columns if not excel_df.empty else ["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota producción escrita final", "Nota final sobre 10", "Ortografía", "Tildes", "Fuente"])
+        manual_df = pd.DataFrame(columns=excel_df.columns if not excel_df.empty else ["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Nota producción escrita final", "Fuente"])
 
     df = pd.concat([excel_df, manual_df], ignore_index=True)
     df = sort_by_first_surname(df)
@@ -305,8 +337,10 @@ if not excel_df.empty or not manual_edit.empty:
     ).clip(upper=10).round(2)
 
     st.subheader("Resultado final")
-    result_cols = ["Alumno", "Grupo", "Nota sobre 9", "Producción escrita", "Descuento producción", "Nota producción escrita final", "Nota final sobre 10"]
-    st.dataframe(edited[result_cols], hide_index=True, use_container_width=True)
+    result_cols = ["Alumno", "Grupo", "Nota final sobre 10"]
+    final_result = edited[result_cols].copy()
+    final_result = sort_by_first_surname(final_result)
+    st.dataframe(final_result, hide_index=True, use_container_width=True)
 
     st.subheader("Media de la clase por apartados")
     chart_df = edited[AREAS].mean().rename("Media").to_frame()
@@ -323,31 +357,39 @@ if not excel_df.empty or not manual_edit.empty:
     final_df = final_df[["Alumno", "Grupo", "Fecha"] + AREAS + ["Nota sobre 9", "Producción escrita", "Descuento producción", "Nota final sobre 10", "Ortografía", "Tildes", "Nota producción escrita final"]]
     final_df = sort_by_first_surname(final_df)
 
-    final_result = edited[result_cols].copy()
-    final_result = sort_by_first_surname(final_result)
-
-    final_areas = edited[AREAS].copy()
-    final_areas.insert(0, "Alumno", edited["Alumno"])
-    final_areas.insert(1, "Grupo", edited["Grupo"])
+    final_areas = edited[["Alumno", "Grupo"] + AREAS + ["Producción escrita"]].copy()
     final_areas = sort_by_first_surname(final_areas)
 
-    # Hoja para seguimiento de refuerzo/desdoble: misma estructura de columnas que el modelo aportado.
-    seguimiento = final_result[["Alumno", "Nota final sobre 10"]].copy()
-    seguimiento = seguimiento.rename(columns={"Nota final sobre 10": "Nota final"})
-    seguimiento["Categoría"] = ""
-    seguimiento["Observaciones"] = ""
-    seguimiento = seguimiento[["Alumno", "Nota final", "Categoría", "Observaciones"]]
-    seguimiento = seguimiento.sort_values("Alumno", key=lambda s: s.astype(str).str.lower(), kind="stable").reset_index(drop=True)
-
-    suffix = group_label(df)
+    groups = get_groups(df)
+    if not groups:
+        groups = [""]
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        final_df.to_excel(writer, sheet_name=f"Resultados {suffix}", index=False)
-        final_result.to_excel(writer, sheet_name=f"Resultado final {suffix}", index=False)
-        seguimiento.to_excel(writer, sheet_name=f"Para refuerzodesdoble {suffix}", index=False)
-        chart_df.round(2).to_excel(writer, sheet_name=f"Medias por áreas {suffix}")
-        final_areas.to_excel(writer, sheet_name="Áreas", index=False)
+        for group in groups:
+            suffix = group_label(group) if group else "2ºA"
+            mask = df["Grupo"].fillna("").astype(str).str.strip() == group
+            group_names = df.loc[mask, "Alumno"].tolist()
+            group_mask_edited = edited["Alumno"].isin(group_names)
+
+            group_final_df = final_df[final_df["Alumno"].isin(group_names)].copy()
+            group_final_result = final_result[final_result["Alumno"].isin(group_names)].copy()
+            group_final_areas = final_areas[final_areas["Alumno"].isin(group_names)].copy()
+
+            # Mantiene el mismo criterio de clasificación para cada grupo.
+            group_seguimiento = build_seguimiento(
+                edited[group_mask_edited][["Alumno", "Nota final sobre 10"] + AREAS].copy()
+            )
+
+            group_chart_df = edited[group_mask_edited][AREAS].mean().rename("Media").to_frame()
+            group_chart_df.loc["Producción escrita"] = edited.loc[group_mask_edited, "Nota producción escrita final"].mean() * 10
+
+            group_final_df.to_excel(writer, sheet_name=f"Resultados {suffix}", index=False)
+            group_final_result.to_excel(writer, sheet_name=f"Resultado final {suffix}", index=False)
+            group_seguimiento.to_excel(writer, sheet_name=f"Para refuerzodesdoble {suffix}", index=False)
+            group_chart_df.round(2).to_excel(writer, sheet_name=f"Medias por áreas {suffix}")
+            group_final_areas.to_excel(writer, sheet_name=f"Áreas {suffix}", index=False)
+
         format_excel(writer)
 
     st.markdown(
@@ -378,5 +420,3 @@ if not excel_df.empty or not manual_edit.empty:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
-elif not uploads:
-    st.info("Sube los Excel individuales o introduce manualmente los alumnos que no tengan archivo.")
