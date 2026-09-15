@@ -162,22 +162,34 @@ def get_groups(df):
 
 
 def classify_student(row):
-    """Clasifica y señala las áreas concretas con peores resultados."""
+    """Clasifica al alumno y genera una observación personalizada a partir de sus áreas."""
     values = pd.to_numeric(pd.Series({area: row.get(area) for area in AREAS}), errors="coerce").dropna()
     if values.empty:
-        return "SIN SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
+        return "SIN SEGUIMIENTO", "No hay datos suficientes de las áreas evaluadas para establecer dificultades concretas."
 
     deficient_areas = values[values < 5].sort_values()
     n_deficient = len(deficient_areas)
     mean = values.mean()
+    areas_text = ", ".join(deficient_areas.index.tolist())
 
-    if n_deficient >= 3 or (n_deficient >= 2 and mean < 5):
-        areas_text = ", ".join(deficient_areas.index.tolist())
-        return "DESDOBLE", f"Dificultades muy graves y generalizadas, especialmente en {areas_text}."
-    if n_deficient >= 1:
-        areas_text = ", ".join(deficient_areas.index.tolist())
-        return "REFUERZO", f"Dificultades importantes, pero más localizadas, especialmente en {areas_text}."
-    return "SIN SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
+    # DESDOBLE: dificultades muy extendidas y perfil global comprometido.
+    if n_deficient >= 4 or (n_deficient >= 3 and mean < 5):
+        if n_deficient >= 4:
+            return "DESDOBLE", f"Dificultades muy graves y generalizadas en prácticamente todas las áreas; los resultados más bajos aparecen en {areas_text}."
+        return "DESDOBLE", f"Dificultades muy importantes y generalizadas, especialmente en {areas_text}."
+
+    # REFUERZO: dificultades importantes, pero más localizadas.
+    if n_deficient >= 2 and mean < 6:
+        return "REFUERZO", f"Dificultades claras en {areas_text}; el resto del perfil permite seguir el aula con apoyo."
+    if n_deficient == 1 and float(deficient_areas.iloc[0]) < 4.5:
+        return "REFUERZO", f"Dificultad destacada en {areas_text}; el resto del perfil permite seguir el aula con apoyo."
+
+    # SIN SEGUIMIENTO: rendimiento razonablemente funcional, aunque pueda haber dificultades puntuales.
+    if n_deficient == 0:
+        return "SIN SEGUIMIENTO", "Buen rendimiento global; no presenta dificultades destacadas en las áreas evaluadas."
+    if n_deficient == 1:
+        return "SIN SEGUIMIENTO", f"Rendimiento global adecuado; la dificultad principal es {areas_text}."
+    return "SIN SEGUIMIENTO", f"Perfil relativamente equilibrado; algunas dificultades en {areas_text}, pero puede seguir con apoyo ordinario."
 
 
 def build_seguimiento(final_result):
