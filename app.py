@@ -166,7 +166,7 @@ def classify_student(row):
     """Clasifica según la extensión de las dificultades en las áreas evaluadas."""
     values = pd.to_numeric(pd.Series([row.get(area) for area in AREAS]), errors="coerce").dropna()
     if values.empty:
-        return "SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
+        return "SIN SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
 
     deficient_areas = values[values < 5]
     n_deficient = len(deficient_areas)
@@ -177,7 +177,7 @@ def classify_student(row):
     if n_deficient >= 1:
         areas_text = ", ".join(deficient_areas.index.tolist())
         return "REFUERZO", f"Dificultades importantes, pero más localizadas, especialmente en {areas_text}."
-    return "SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
+    return "SIN SEGUIMIENTO", "Ha tirado razonablemente en el conjunto; no precisa apoyo específico de momento."
 
 
 def build_seguimiento(final_result):
